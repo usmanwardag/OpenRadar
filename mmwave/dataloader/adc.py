@@ -42,23 +42,10 @@ class CMD(Enum):
 CONFIG_HEADER = '5aa5'
 CONFIG_STATUS = '0000'
 CONFIG_FOOTER = 'aaee'
-ADC_PARAMS = {'chirps': 128,  # 32
-              'rx': 4,
-              'tx': 3,
-              'samples': 128,
-              'IQ': 2,
-              'bytes': 2}
+
 # STATIC
 MAX_PACKET_SIZE = 4096
 BYTES_IN_PACKET = 1456
-# DYNAMIC
-BYTES_IN_FRAME = (ADC_PARAMS['chirps'] * ADC_PARAMS['rx'] * ADC_PARAMS['tx'] *
-                  ADC_PARAMS['IQ'] * ADC_PARAMS['samples'] * ADC_PARAMS['bytes'])
-BYTES_IN_FRAME_CLIPPED = (BYTES_IN_FRAME // BYTES_IN_PACKET) * BYTES_IN_PACKET
-PACKETS_IN_FRAME = BYTES_IN_FRAME / BYTES_IN_PACKET
-PACKETS_IN_FRAME_CLIPPED = BYTES_IN_FRAME // BYTES_IN_PACKET
-UINT16_IN_PACKET = BYTES_IN_PACKET // 2
-UINT16_IN_FRAME = BYTES_IN_FRAME // 2
 
 
 class DCA1000:
@@ -86,12 +73,17 @@ class DCA1000:
     """
 
     def __init__(self, static_ip='192.168.33.30', adc_ip='192.168.33.180',
-                 data_port=4098, config_port=4096):
-        # Save network data
-        # self.static_ip = static_ip
-        # self.adc_ip = adc_ip
-        # self.data_port = data_port
-        # self.config_port = config_port
+                 data_port=4098, config_port=4096, chirps=128, tx=3, rx=4, 
+                 samples=128, iq=2, bytes_per_sample=2):
+
+        self.adc_params = {'chirps': chirps, 'tx': tx, 'rx': rx, 
+                           'samples': 128, 'iq': iq, 'bytes_per_sample': bytes_per_sample}
+        self.bytes_in_frame = chirps * rx * tx * samples * iq * bytes_per_sample
+        self.bytes_in_frame_clipped = (self.bytes_in_frame // BYTES_IN_PACKET) * BYTES_IN_PACKET
+        self.packets_in_frame = self.bytes_in_frame / BYTES_IN_PACKET
+        self.packets_in_frame_clipped = self.bytes_in_frame // BYTES_IN_PACKET
+        self.uint16_in_packet = BYTES_IN_PACKET // 2
+        self.uint16_in_frame = self.bytes_in_frame // 2
 
         # Create configuration and data destinations
         self.cfg_dest = (adc_ip, config_port)
@@ -170,14 +162,14 @@ class DCA1000:
         self.data_socket.settimeout(timeout)
 
         # Frame buffer
-        ret_frame = np.zeros(UINT16_IN_FRAME, dtype=np.uint16)
+        ret_frame = np.zeros(self.uint16_in_frame, dtype=np.uint16)
 
         # Wait for start of next frame
         while True:
             packet_num, byte_count, packet_data = self._read_data_packet()
-            if byte_count % BYTES_IN_FRAME_CLIPPED == 0:
+            if byte_count % self.bytes_in_frame_clipped == 0:
                 packets_read = 1
-                ret_frame[0:UINT16_IN_PACKET] = packet_data
+                ret_frame[0:self.uint16_in_packet] = packet_data
                 break
 
         # Read in the rest of the frame            
@@ -185,17 +177,17 @@ class DCA1000:
             packet_num, byte_count, packet_data = self._read_data_packet()
             packets_read += 1
 
-            if byte_count % BYTES_IN_FRAME_CLIPPED == 0:
-                self.lost_packets = PACKETS_IN_FRAME_CLIPPED - packets_read
+            if byte_count % self.bytes_in_frame_clipped == 0:
+                self.lost_packets = self.packets_in_frame_clipped - packets_read
                 return ret_frame
 
-            curr_idx = ((packet_num - 1) % PACKETS_IN_FRAME_CLIPPED)
+            curr_idx = ((packet_num - 1) % self.packets_in_frame_clipped)
             try:
-                ret_frame[curr_idx * UINT16_IN_PACKET:(curr_idx + 1) * UINT16_IN_PACKET] = packet_data
+                ret_frame[curr_idx * self.uint16_in_packet:(curr_idx + 1) * self.uint16_in_packet] = packet_data
             except:
                 pass
 
-            if packets_read > PACKETS_IN_FRAME_CLIPPED:
+            if packets_read > self.packets_in_frame_clipped:
                 packets_read = 0
 
     def _send_command(self, cmd, length='0000', body='', timeout=1):
